@@ -4,6 +4,7 @@
 from attacks.abstract_attack import AbstractAttack
 from tqdm import tqdm
 from lib.keys_wrapper import PrivateKey
+from lib.number_theory import is_divisible
 
 
 class Attack(AbstractAttack):
@@ -18,11 +19,11 @@ class Attack(AbstractAttack):
         maxlen = 25  # max number of digits in the final integer
         for i in tqdm(range(maxlen - 4), disable=(not progress)):
             prime = int("3133" + ("3" * i) + "7")
-            if publickey.n % prime == 0:
+            if is_divisible(publickey.n, prime):
                 publickey.p = prime
                 publickey.q = publickey.n // publickey.p
                 priv_key = PrivateKey(
-                    p=int(publickey.p),
+                    p=publickey.p,
                     q=int(publickey.q),
                     e=int(publickey.e),
                     n=int(publickey.n),

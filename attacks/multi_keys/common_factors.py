@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from attacks.abstract_attack import AbstractAttack
-from lib.number_theory import gcd, ProductTree
+from lib.number_theory import gcd, list_prod
 from lib.keys_wrapper import PrivateKey
-from gmpy2 import mul
 
 
 class Attack(AbstractAttack):
@@ -20,30 +19,21 @@ class Attack(AbstractAttack):
         pubs = [pub.n for pub in publickeys]
         # Try to find the gcd between each pair of moduli and resolve the private keys if gcd > 1
         priv_keys = []
-        M = ProductTree(pubs)
-        for i in range(0, len(pubs) - 1):
+        M = list_prod(tuple(pubs))
+        for i in range(0, len(pubs)):
             pub = pubs[i]
-            x = publickeys[i]
-            R = M // pub
-            g = gcd(pub, R)
-            if pub > g > 1:
-                try:
-                    p = g
-                    q = pub // g
-                    x.p = p
-                    x.q = q
-                    # update each attackobj with a private_key
-                    priv_key_1 = PrivateKey(int(x.p), int(x.q), int(x.e), int(x.n))
-                    priv_keys.append(priv_key_1)
-
-                    self.logger.info(
-                        "[*] Found common factor in modulus for " + x.filename
-                    )
-                except ValueError:
-                    continue
+            p = gcd(pub, M // pub)
+            if pub > p > 1:
+                x = publickeys[i]
+                x.p = p
+                x.q = pub // p
+                # update each attackobj with a private_key
+                priv_key_1 = PrivateKey(int(x.p), int(x.q), int(x.e), int(x.n))
+                priv_keys.append(priv_key_1)
+                self.logger.info(f"[*] Found common factor in modulus for {x.filename}")
 
         priv_keys = list(set(priv_keys))
-        if len(priv_keys) == 0:
+        if not priv_keys:
             priv_keys = None
 
         return (priv_keys, None)

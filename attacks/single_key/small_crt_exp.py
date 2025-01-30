@@ -3,7 +3,6 @@
 
 from attacks.abstract_attack import AbstractAttack
 import subprocess
-from lib.crypto_wrapper import RSA
 from lib.keys_wrapper import PrivateKey
 from lib.utils import rootpath
 
@@ -21,10 +20,10 @@ class Attack(AbstractAttack):
                 subprocess.check_output(
                     [
                         "sage",
-                        "%s/sage/small_crt_exp.sage" % rootpath,
+                        f"{rootpath}/sage/small_crt_exp.sage",
                         str(publickey.n),
                         str(publickey.e),
-                        str(1 << 32),  # Default upper bound of min(d_p, d_q)
+                        str(1 << 32),
                     ],
                     timeout=self.timeout,
                     stderr=subprocess.DEVNULL,

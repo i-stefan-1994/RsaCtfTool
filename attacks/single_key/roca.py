@@ -20,12 +20,12 @@ class Attack(AbstractAttack):
         if is_roca_vulnerable(publickey.n):
             try:
                 sageresult = subprocess.check_output(
-                    ["sage", "%s/sage/roca_attack.py" % rootpath, str(publickey.n)],
+                    ["sage", f"{rootpath}/sage/roca_attack.py", str(publickey.n)],
                     timeout=self.timeout,
                     stderr=subprocess.DEVNULL,
                 )
 
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 return (None, None)
 
             if b"FAIL" not in sageresult and b":" in sageresult:
@@ -38,7 +38,7 @@ class Attack(AbstractAttack):
             else:
                 return (None, None)
         else:
-            self.logger.info("[-] This key is not roca, skiping test...")
+            self.logger.error("[-] This key is not roca, skiping test...")
             return (None, None)
 
     def test(self):

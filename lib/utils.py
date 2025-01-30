@@ -9,6 +9,8 @@ import logging
 import subprocess
 import contextlib
 import binascii
+import psutil
+from threading import Timer
 from lib.keys_wrapper import PublicKey
 from lib.number_theory import invmod
 
@@ -16,22 +18,19 @@ from lib.number_theory import invmod
 # allows sage scripts to be launched anywhere in the fs
 _libutil_ = os.path.realpath(__file__)
 rootpath, _libutil_ = os.path.split(_libutil_)
-rootpath = "%s/.." % rootpath  # up one dir
+rootpath = f"{rootpath}/.."
 
 
 def get_numeric_value(value):
     """Parse input (hex or numerical)"""
-    if value.startswith("0x"):
-        return int(value, 16)
-    else:
-        return int(value)
+    return int(value, 16) if value.startswith("0x") else int(value)
 
 
 def get_base64_value(value):
     """Parse input (hex or numerical)"""
     try:
-        if base64.b64encode(base64.b64decode(value)) == value:
-            return base64.b64decode(value)
+        if (base64.b64encode(d := base64.b64decode(value)) == value):
+            return d
         else:
             return value
     except:
@@ -45,28 +44,40 @@ def sageworks():
     except OSError:
         return False
 
-    if "SageMath version" in sageversion.decode("utf-8"):
-        return True
-    else:
-        return False
+    return "SageMath version" in sageversion.decode("utf-8")
 
 
-def print_results(args, publickey, private_key, uncipher):
+def print_decrypted_res(c, logger):
+    logger.info(f"HEX : 0x{c.hex()}")
+
+    int_big = int.from_bytes(c, "big")
+    int_little = int.from_bytes(c, "little")
+
+    logger.info(f"INT (big endian) : {int_big}")
+    logger.info(f"INT (little endian) : {int_little}")
+    with contextlib.suppress(UnicodeDecodeError):
+        c_utf8 = c.decode("utf-8")
+        logger.info(f"utf-8 : {c_utf8}")
+    with contextlib.suppress(UnicodeDecodeError):
+        c_utf16 = c.decode("utf-16")
+        logger.info(f"utf-16 : {c_utf16}")
+    logger.info(f"STR : {repr(c)}")
+
+
+def print_results(args, publickey, private_key, decrypt):
     """Print results to output"""
     logger = logging.getLogger("global_logger")
-    if (
-        (args.private and private_key is not None)
-        or (args.dumpkey)
-        or (args.uncipher and uncipher not in [None, []])
+    if any(
+        (
+            (args.private and private_key is not None),
+            args.dumpkey,
+            (args.decrypt and decrypt not in [None, []]),
+        )
     ):
-        if publickey is not None:
+        if publickey is not None and isinstance(publickey, str):
             logger.info("\nResults for %s:" % publickey)
     if private_key is not None:
-        if not isinstance(private_key, list):
-            private_keys = [private_key]
-        else:
-            private_keys = private_key
-
+        private_keys = private_key if isinstance(private_key, list) else [private_key]
         if args.private:
             logger.info("\nPrivate key :")
             for priv_key in private_keys:
@@ -76,88 +87,74 @@ def print_results(args, publickey, private_key, uncipher):
                             with open(args.output, "a") as output_fd:
                                 output_fd.write("%s\n" % str(priv_key))
                         except:
-                            logger.error("Can't write output file : %s" % args.output)
-                    if str(priv_key) != "":
-                        logger.info(priv_key)
-                    else:
+                            logger.error(f"Can't write output file : {args.output}")
+                    if not str(priv_key):
                         logger.warning(
                             "Key format seems wrong, check input data to solve this."
                         )
 
+                    else:
+                        logger.info(priv_key)
         if args.dumpkey:
+            logger.info("\nPrivate key details:")
             for priv_key in private_keys:
                 if priv_key.n is not None:
-                    logger.info("n: " + str(priv_key.n))
+                    logger.info(f"n: {str(priv_key.n)}")
                 if priv_key.e is not None:
-                    logger.info("e: " + str(priv_key.e))
+                    logger.info(f"e: {str(priv_key.e)}")
                 if priv_key.d is not None:
-                    logger.info("d: " + str(priv_key.d))
+                    logger.info(f"d: {str(priv_key.d)}")
                 if priv_key.p is not None:
-                    logger.info("p: " + str(priv_key.p))
+                    logger.info(f"p: {str(priv_key.p)}")
                 if priv_key.q is not None:
-                    logger.info("q: " + str(priv_key.q))
+                    logger.info(f"q: {str(priv_key.q)}")
                 if args.ext:
                     dp = priv_key.d % (priv_key.p - 1)
                     dq = priv_key.d % (priv_key.q - 1)
                     pinv = invmod(priv_key.p, priv_key.q)
                     qinv = invmod(priv_key.q, priv_key.p)
-                    logger.info("dp: " + str(dp))
-                    logger.info("dq: " + str(dq))
-                    logger.info("pinv: " + str(pinv))
-                    logger.info("qinv: " + str(qinv))
+                    logger.info(f"dp: {str(dp)}")
+                    logger.info(f"dq: {str(dq)}")
+                    logger.info(f"pinv: {str(pinv)}")
+                    logger.info(f"qinv: {str(qinv)}")
     else:
         if args.private:
             logger.critical("Sorry, cracking failed.")
 
-    if args.dumpkey:
-        if args.publickey is not None:
-            for public_key in args.publickey:
-                with open(public_key, "rb") as pubkey_fd:
-                    publickey_obj = PublicKey(pubkey_fd.read(), publickey)
-                    logger.info("\nPublic key details for %s" % publickey_obj.filename)
-                    logger.info("n: " + str(publickey_obj.n))
-                    logger.info("e: " + str(publickey_obj.e))
+        if args.dumpkey:
+            if args.publickey is not None:
+                for public_key in args.publickey:
+                    with open(public_key, "rb") as pubkey_fd:
+                        publickey_obj = PublicKey(pubkey_fd.read(), publickey)
+                        logger.info("\nPublic key details for %s" % publickey_obj.filename)
+                        logger.info(f"n: {str(publickey_obj.n)}")
+                        logger.info(f"e: {str(publickey_obj.e)}")
 
-    if args.uncipher:
-        if uncipher is not None:
-            if not isinstance(uncipher, list):
-                uncipher = [uncipher]
-            if len(uncipher) > 0:
-                logger.info("\nUnciphered data :")
-                for uncipher_ in uncipher:
-                    if not isinstance(uncipher_, list):
-                        uncipher_ = [uncipher_]
+    if args.decrypt:
+        if decrypt is not None:
+            if not isinstance(decrypt, list):
+                decrypt = [decrypt]
+            if len(decrypt) > 0:
+                logger.info("\nDecrypted data :")
+                for decrypted_ in decrypt:
+                    if not isinstance(decrypted_, list):
+                        decrypted_ = [decrypted_]
 
-                    for c in uncipher_:
+                    for c in decrypted_:
                         if args.output:
                             try:
                                 with open(args.output, "ab") as output_fd:
                                     output_fd.write(c)
                             except:
-                                logger.error(
-                                    "Can't write output file : %s" % args.output
-                                )
+                                logger.error(f"Can't write output file : {args.output}")
+                        print_decrypted_res(c, logger)
+                        if len(c) > 3 and c[0] == 0 and c[1] == 2:
+                            nc = c[c[2:].index(0) + 2 :]
+                            logger.info("\nPKCS#1.5 padding decoded!")
+                            print_decrypted_res(nc, logger)
 
-                        logger.info(f"HEX : 0x{c.hex()}")
-
-                        int_big = int.from_bytes(c, "big")
-                        int_little = int.from_bytes(c, "little")
-
-                        logger.info(f"INT (big endian) : {int_big}")
-                        logger.info(f"INT (little endian) : {int_little}")
-                        try:
-                            c_utf8 = c.decode("utf-8")
-                            logger.info(f"utf-8 : { c_utf8 }")
-                        except UnicodeDecodeError:
-                            pass
-                        try:
-                            c_utf16 = c.decode("utf-16")
-                            logger.info(f"utf-16 : { c_utf16 }")
-                        except UnicodeDecodeError:
-                            pass
-                        logger.info(f"STR : {repr(c)}")
         else:
-            logger.critical("Sorry, unciphering failed.")
+            logger.critical("Sorry, decrypteding failed.")
 
 
 class TimeoutError(Exception):
@@ -188,12 +185,16 @@ class timeout(contextlib.ContextDecorator):
         self.logger.warning("[!] Timeout.")
         raise TimeoutError(self.timeout_message)
 
-    def __enter__(self):
-        signal.signal(signal.SIGALRM, self._timeout_handler)
-        signal.alarm(self.seconds)
+    def __enter__(self):        
+        signal.signal(signal.SIGTERM, self._timeout_handler)        
+        def alarm_func():#send signal
+            signal.raise_signal(signal.SIGTERM)
+
+        self.timer = Timer(self.seconds, alarm_func)#this thread will send signal when timeout
+        self.timer.start()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        signal.alarm(0)
+        self.timer.cancel()
         if self.suppress and exc_type is TimeoutError:
             return True
 
@@ -202,9 +203,7 @@ def s2n(s):
     """
     String to number.
     """
-    if not len(s):
-        return 0
-    return int(binascii.hexlify(s), 16)
+    return 0 if not len(s) else int(binascii.hexlify(s), 16)
 
 
 def n2s(n):
@@ -213,7 +212,7 @@ def n2s(n):
     """
     s = hex(n)[2:].rstrip("L")
     if len(s) & 1 != 0:
-        s = "0" + s
+        s = f"0{s}"
 
     return binascii.unhexlify(s)
 
@@ -223,7 +222,7 @@ def binary_search(L, n):
     left = 0
     right = len(L) - 1
     while left <= right:
-        mid = (left + right) >> 1
+        mid = ((right - left) >> 1) + left
         if n == L[mid]:
             return mid
         elif n < L[mid]:
@@ -231,3 +230,12 @@ def binary_search(L, n):
         else:
             left = mid + 1
     return -1
+
+
+def terminate_proc_tree(pid, including_parent=False):
+    parent = psutil.Process(pid)
+    children = parent.children(recursive=True)
+    for child in children:
+        child.kill()
+    if including_parent:
+        parent.kill()

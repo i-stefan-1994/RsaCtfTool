@@ -11,8 +11,6 @@
 # @CTFKris - https://github.com/sourcekris/RsaCtfTool/
 #
 
-import os
-import pathlib
 import re
 import logging
 from attacks.abstract_attack import AbstractAttack
@@ -31,26 +29,12 @@ class SiqsAttack(object):
         self.p = None
         self.q = None
 
-    def testyafu(self):
-        """Test if yafu can be run"""
-
-        try:
-            yafutest = subprocess.check_output(
-                ["yafu", "siqs(1549388302999519)"],
-                timeout=self.timeout,
-                stderr=subprocess.DEVNULL,
-            )
-        except:
-            yafutest = b""
-
-        return b"48670331" in yafutest
-
     def doattack(self):
         """Perform attack"""
         yafurun = subprocess.check_output(
             [
                 "yafu",
-                "siqs(" + str(self.n) + ")",
+                f"siqs({str(self.n)})",
                 "-siqsT",
                 str(self.timeout),
                 "-threads",
@@ -60,15 +44,15 @@ class SiqsAttack(object):
             stderr=subprocess.DEVNULL,
         )
 
-        primesfound = []
-
         if b"input too big for SIQS" in yafurun:
-            self.logger.info("[-] Modulus too big for SIQS method.")
+            self.logger.error("[-] Modulus too big for SIQS method.")
             return
 
-        for line in yafurun.splitlines():
-            if re.search(b"^P[0-9]+ = [0-9]+$", line):
-                primesfound.append(int(line.split(b"=")[1]))
+        primesfound = [
+            int(line.split(b"=")[1])
+            for line in yafurun.splitlines()
+            if re.search(b"^P[0-9]+ = [0-9]+$", line)
+        ]
 
         if len(primesfound) == 2:
             self.p = primesfound[0]
@@ -97,11 +81,7 @@ class Attack(AbstractAttack):
             return None, None
 
         siqsobj = SiqsAttack(publickey.n, self.timeout)
-
-        if siqsobj.testyafu():
-            siqsobj.doattack()
-        else:
-            return None, None
+        siqsobj.doattack()
 
         if siqsobj.p and siqsobj.q:
             publickey.q = siqsobj.q

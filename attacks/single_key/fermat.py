@@ -4,7 +4,7 @@
 from attacks.abstract_attack import AbstractAttack
 from lib.keys_wrapper import PrivateKey
 from lib.exceptions import FactorizationError
-from lib.number_theory import isqrt
+from lib.algos import fermat
 
 
 class Attack(AbstractAttack):
@@ -12,26 +12,13 @@ class Attack(AbstractAttack):
         super().__init__(timeout)
         self.speed = AbstractAttack.speed_enum["medium"]
 
-    # Source - http://stackoverflow.com/a/20465181
-
-    def fermat(self, n):
-        """Fermat attack"""
-        a = b = isqrt(n)
-        b2 = pow(a, 2) - n
-        while pow(b, 2) != b2:
-            a += 1
-            b2 = pow(a, 2) - n
-            b = isqrt(b2)
-        p, q = (a + b), (a - b)
-        assert n == p * q
-        return p, q
-
     def attack(self, publickey, cipher=[], progress=True):
         """Run fermat attack with a timeout"""
         try:
-            publickey.p, publickey.q = self.fermat(publickey.n)
+            publickey.p, publickey.q = fermat(publickey.n)
 
         except FactorizationError:
+            self.logger.error("N should not be a 4k+2 number...")
             return None, None
 
         if publickey.p is not None and publickey.q is not None:

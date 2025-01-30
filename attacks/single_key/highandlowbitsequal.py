@@ -3,46 +3,7 @@
 
 from attacks.abstract_attack import AbstractAttack
 from lib.keys_wrapper import PrivateKey
-from lib.exceptions import FactorizationError
-from lib.number_theory import isqrt, is_square, invert
-
-
-def InverseInverseSqrt2exp(n, k):
-    """
-    it does not contemplate k<3
-    """
-    a = 1
-    t = 3
-    while t < k:
-        t = min(k, (t << 1) - 2)
-        a = (a * (3 - (a * a) * n) >> 1) & ((1 << t) - 1)
-    return invert(a, (1 << k))
-
-
-def FactorHighAndLowBitsEqual(n, middle_bits=3):
-    """
-    Code taken and heavy modified from https://github.com/google/paranoid_crypto/blob/main/paranoid_crypto/lib/rsa_util.py
-    Licensed under open source Apache License Version 2.0, January 2004.
-    """
-    if (n.bit_length() < 6) or (n % 8 != 1):
-        return None
-    k = (n.bit_length() + 1) >> 1
-    r0 = InverseInverseSqrt2exp(n, k + 1)
-    if r0 is None:
-        raise ArithmeticError("expecting that square root exists")
-    a = isqrt(n - 1) + 1
-    for r in [r0, (1 << k) - r0]:
-        s = a
-        for i in range(k):
-            if ((s ^ r) >> i) & 1:
-                m = min(middle_bits, i)
-                for _ in range(1 << m):
-                    s += 1 << (i - m)
-                    d = (s * s) - n
-                    if is_square(d):
-                        d_sqrt = isqrt(d)
-                        return (s - d_sqrt, s + d_sqrt)
-    return None
+from lib.algos import FactorHighAndLowBitsEqual
 
 
 class Attack(AbstractAttack):
@@ -76,7 +37,8 @@ class Attack(AbstractAttack):
         from lib.keys_wrapper import PublicKey
 
         key_data = """-----BEGIN PUBLIC KEY-----
-MDwwDQYJKoZIhvcNAQEBBQADKwAwKAIhAKGAooBwksZWSiOH7YSe+0guURdBfMxcOdTR3r4EsjjRAgMBAAE=
+MDQwDQYJKoZIhvcNAQEBBQADIwAwIAIZAKGAon/dEGXmAuaZ0X1IIW2sUdRAh1ew
+SQIDAQAB
 -----END PUBLIC KEY-----"""
         result = self.attack(PublicKey(key_data), progress=False)
         return result != (None, None)

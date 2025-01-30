@@ -295,7 +295,7 @@ primes_txt += ["FFFFFFFF FFFFFFFF FFFFFFFF 99DEF836 146BC9B1 B4D22831"]
 # p = 2^(224) - 2^(96) + 1
 # Group prime
 primes_txt += [
-    """FFFFFFF FFFFFFFF FFFFFFFF FFFFFFFF 00000000 00000000 
+    """FFFFFFF FFFFFFFF FFFFFFFF FFFFFFFF 00000000 00000000
 00000001"""
 ]
 # A
@@ -1297,14 +1297,8 @@ a0e03b4dae2af5b0c8ebbb3c83539961
 ]
 
 
-def addpm1(n):
-    if n > 2:
-        return [n - 1, n, n + 1]
-    else:
-        return [n, n + 1]
-
-
 def load_system_consts():
+    addpm1 = lambda n: [n - 1, n, n + 1] if n > 2 else [n, n + 1]
     global primes_txt, notprimes_txt, primes_int, primes_txt_arry
     primes_tmp0 = primes_txt
     primes_tmp0 = map(lambda x: x.replace("\n", ""), primes_tmp0)
@@ -1321,5 +1315,4 @@ def load_system_consts():
     primes_tmp1 = map(lambda x: int(x), primes_tmp1)
     primes_tmp1 = sorted(set(primes_tmp1))
     ALL = sorted(set(primes_tmp0 + notprimes_tmp0 + primes_int + primes_tmp1))
-    ALL = sorted(set(sum(map(addpm1, ALL), [])))
-    return ALL
+    return sorted(set(sum(map(addpm1, ALL), [])))

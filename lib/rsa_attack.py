@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import time
 import logging
 import importlib
 from lib.keys_wrapper import PublicKey, PrivateKey
@@ -20,50 +21,43 @@ class RSAAttack(object):
         self.logger = logging.getLogger("global_logger")
 
         # Load ciphertext
-        if args.uncipher is not None:
-            self.cipher = args.uncipher
-        else:
-            self.cipher = None
-
+        self.cipher = args.decrypt if args.decrypt is not None else None
         self.priv_key = None
         self.priv_keys = []
         self.partitial_priv_key = None
-        self.unciphered = []
+        self.decrypted = []
         self.implemented_attacks = []
 
     def get_boolean_results(self):
         """Return a boolean value according to requested
-        actions (private, uncipher) if actions are done or not
+        actions (private, decrypt) if actions are done or not
         """
         if self.args.private and self.priv_key:
             return True
 
-        if self.args.uncipher and self.unciphered:
-            return True
-
-        return False
+        return bool(self.args.decrypt and self.decrypted)
 
     def can_stop_tests(self):
         """Return a boolean if requested actions are done
         avoiding running extra attacks
         """
         if self.args.private is not None and self.priv_key is not None:
-            if self.args.uncipher is None:
+            if self.args.decrypt is None:
                 return True
-            if self.args.uncipher is not None and self.unciphered is not []:
+            if self.decrypted is not []:
                 return True
 
-        if self.args.uncipher is not None and self.unciphered is not []:
+        if self.args.decrypt is not None and self.decrypted is not []:
             if self.args.private is None:
                 return True
-            if self.args.private is not None and self.priv_key is not None:
+            if self.priv_key is not None:
                 return True
 
         return False
 
     def print_results_details(self, publickeyname):
         """Print extra output according to requested action.
-        Uncipher data if needed.
+        Decrypt data if needed.
         """
         # check and print resulting private key
         if self.partitial_priv_key is not None and self.args.private:
@@ -72,31 +66,32 @@ class RSAAttack(object):
             self.logger.info("n: %i" % self.partitial_priv_key.key.n)
 
         # If we wanted to decrypt, do it now
-        if self.cipher and self.priv_key is not None:
-            for cipher in self.cipher:
-                if not isinstance(self.priv_key, list):
-                    priv_keys = [self.priv_key]
-                else:
-                    priv_keys = self.priv_key
+        if self.cipher:
+            if self.priv_key is not None:
+                for cipher in self.cipher:
+                    priv_keys = (
+                        [self.priv_key]
+                        if not isinstance(self.priv_key, list)
+                        else self.priv_key
+                    )
+                    if self.args.check_publickey:
+                        k, ok = self.pre_attack_check(priv_keys)
+                        if not ok:
+                            return False
 
-                if self.args.check_publickey:
-                    k, ok = self.pre_attack_check(priv_keys)
-                    if not ok:
-                        return False
+                    for priv_key in priv_keys:
+                        decrypted = priv_key.decrypt(cipher)
+                        if not isinstance(decrypted, list):
+                            decrypted = [decrypted]
 
-                for priv_key in priv_keys:
-                    unciphered = priv_key.decrypt(cipher)
-                    if not isinstance(unciphered, list):
-                        unciphered = [unciphered]
+                    self.decrypted = self.decrypted + decrypted
+            elif self.partitial_priv_key is not None:
+                # needed, if n is prime and so we cant calc p and q
+                enc_msg = bytes_to_long(self.cipher)
+                dec_msg = self.partitial_priv_key.key._decrypt(enc_msg)
+                self.decrypted.append(long_to_bytes(dec_msg))
 
-                self.unciphered = self.unciphered + unciphered
-        elif self.cipher and self.partitial_priv_key is not None:
-            # needed, if n is prime and so we cant calc p and q
-            enc_msg = bytes_to_long(self.cipher)
-            dec_msg = self.partitial_priv_key.key._decrypt(enc_msg)
-            self.unciphered.append(long_to_bytes(dec_msg))
-
-        print_results(self.args, publickeyname, self.priv_key, self.unciphered)
+        print_results(self.args, publickeyname, self.priv_key, self.decrypted)
 
     def pre_attack_check(self, publickeys):
         """Basic pre Attack checks implementation"""
@@ -107,31 +102,28 @@ class RSAAttack(object):
         for publickey in publickeys:
             if publickey.n & 1 == 0:
                 self.logger.error(
-                    "[!] Public key: %s modulus should be odd." % publickey.filename
+                    f"[!] Public key: {publickey.filename} modulus should be odd."
                 )
                 ok = False
             if gcd(publickey.n, publickey.e) > 1:
                 self.logger.error(
-                    "[!] Public key: %s modulus is coprime with exponent."
-                    % publickey.filename
+                    f"[!] Public key: {publickey.filename} modulus is coprime with exponent."
                 )
                 ok = False
-            if not (publickey.n > 3):
+            if publickey.n <= 3:
                 self.logger.error(
-                    "[!] Public key: %s modulus should be > 3." % publickey.filename
+                    f"[!] Public key: {publickey.filename} modulus should be > 3."
                 )
                 ok = False
             if is_prime(publickey.n):
                 self.logger.error(
-                    "[!] Public key: %s modulus should not be prime."
-                    % publickey.filename
+                    f"[!] Public key: {publickey.filename} modulus should not be prime."
                 )
                 ok = False
             i = isqrt(publickey.n)
             if publickey.n == (i**2):
                 self.logger.error(
-                    "[!] Public key: %s modulus should not be a perfect square."
-                    % publickey.filename
+                    f"[!] Public key: {publickey.filename} modulus should not be a perfect square."
                 )
                 publickey.p = i
                 publickey.q = i
@@ -155,13 +147,9 @@ class RSAAttack(object):
             if attack in self.args.attack or "all" in self.args.attack:
                 try:
                     if multikeys:
-                        attack_module = importlib.import_module(
-                            "attacks.multi_keys.%s" % attack
-                        )
+                        attack_module = importlib.import_module(f"attacks.multi_keys.{attack}")
                     else:
-                        attack_module = importlib.import_module(
-                            "attacks.single_key.%s" % attack
-                        )
+                        attack_module = importlib.import_module(f"attacks.single_key.{attack}")
 
                     # Dynamically add named-arguments to constructor if same sys.argv exists
                     expected_args = list(
@@ -189,14 +177,13 @@ class RSAAttack(object):
         self.implemented_attacks.sort(key=lambda x: x.speed, reverse=True)
 
     def priv_key_send2fdb(self):
-        if self.args.sendtofdb == True:
+        if self.args.sendtofdb:
             if self.priv_key is not None:
                 if type(self.priv_key) is PrivateKey:
                     send2fdb(self.priv_key.n, [self.priv_key.p, self.priv_key.q])
-                else:
-                    if len(self.priv_key) > 0:
-                        for privkey in list(set(self.priv_key)):
-                            send2fdb(privkey.n, [privkey.p, privkey.q])
+                elif len(self.priv_key) > 0:
+                    for privkey in list(set(self.priv_key)):
+                        send2fdb(privkey.n, [privkey.p, privkey.q])
 
     def attack_multiple_keys(self, publickeys, attacks_list):
         """Run attacks on multiple keys"""
@@ -208,12 +195,14 @@ class RSAAttack(object):
         for publickey in publickeys:
             try:
                 with open(publickey, "rb") as pubkey_fd:
-                    publickeys_obj.append(PublicKey(pubkey_fd.read(), publickey))
+                    publickeys_obj.append(
+                        PublicKey(pubkey_fd.read(), filename=publickey)
+                    )
             except Exception:
-                self.logger.error("[*] Key format not supported : %s." % publickey)
+                self.logger.error(f"[*] Key format not supported : {publickey}.")
                 continue
 
-        if len(publickeys_obj) == 0:
+        if not publickeys_obj:
             self.logger.error("No key loaded.")
             exit(1)
 
@@ -225,20 +214,20 @@ class RSAAttack(object):
         # Loop through implemented attack methods and conduct attacks
         for attack_module in self.implemented_attacks:
             if isinstance(self.publickey, list):
-                self.logger.info("[*] Performing %s attack." % attack_module.get_name())
+                self.logger.info(f"[*] Performing {attack_module.get_name()} attack.")
                 try:
                     if not attack_module.can_run():
                         continue
 
-                    self.priv_key, unciphered = attack_module.attack(
+                    self.priv_key, decrypted = attack_module.attack(
                         self.publickey, self.cipher
                     )
 
-                    if unciphered is not None and unciphered is not []:
-                        if isinstance(unciphered, list):
-                            self.unciphered = self.unciphered + unciphered
+                    if decrypted is not None and decrypted is not []:
+                        if isinstance(decrypted, list):
+                            self.decrypted = self.decrypted + decrypted
                         else:
-                            self.unciphered.append(unciphered)
+                            self.decrypted.append(decrypted)
                     if self.can_stop_tests():
                         self.logger.info(
                             f"[*] Attack success with {attack_module.get_name()} method !"
@@ -255,15 +244,16 @@ class RSAAttack(object):
     def attack_single_key(self, publickey, attacks_list=[], test=False):
         """Run attacks on single keys"""
 
-        c = 0  # Attack counter
         l = len(attacks_list)
         if l == 0:
             self.args.attack = "all"
 
         self.load_attacks(attacks_list)
+        T = []
         if test:
-            for attack in self.implemented_attacks:
-                c += 1
+            self.load_attacks(attacks_list, multikeys=True)
+            for c, attack in enumerate(self.implemented_attacks, start=1):
+                t0 = time.time()
                 if attack.can_run():
                     self.logger.info(
                         "[*] %d of %d, Testing: %s" % (c, l, attack.get_name())
@@ -278,61 +268,116 @@ class RSAAttack(object):
                             self.logger.warning("[!] Test not implemented")
                     except Exception:
                         self.logger.error("[!] Failure")
-            exit(0)
-
-        # Read keyfile
-        try:
-            with open(publickey, "rb") as pubkey_fd:
-                self.publickey = PublicKey(pubkey_fd.read(), publickey)
-        except Exception as e:
-            self.logger.error("[*] %s." % e)
+                t1 = time.time()
+                td = t1 - t0
+                T += [td]
+                self.logger.info("[+] Time elapsed: %.4f sec." % round(td, 4))
+            if len(T) > 0:
+                tmin, tmax, tavg = min(T), max(T), sum(T) / len(T)
+                self.logger.info(
+                    "[+] Total time elapsed min,max,avg: %.4f/%.4f/%.4f sec."
+                    % (round(tmin, 4), round(tmax, 4), round(tavg, 4))
+                )
             return
 
-        if self.args.check_publickey:
-            k, ok = self.pre_attack_check(self.publickey)
-            if not ok:
-                return False
-        # Read n/e from publickey file
-        if not self.args.n or not self.args.e:
-            self.args.n = self.publickey.n
-            self.args.e = self.publickey.e
+        if isinstance(publickey, str):
+            # Read keyfile
+            try:
+                with open(publickey, "rb") as pubkey_fd:
+                    self.publickey = PublicKey(pubkey_fd.read(), filename=publickey)
+            except Exception as e:
+                self.logger.error(f"[!] {e}.")
+                return
+            if self.args.check_publickey:
+                k, ok = self.pre_attack_check(self.publickey)
+                if not ok:
+                    return False
+            # Read n/e from publickey file
+            if not self.args.n or not self.args.e:
+                self.args.n = self.publickey.n
+                self.args.e = self.publickey.e
+        else:
+            self.publickey = publickey
 
+        if is_prime(self.publickey.n):
+            self.logger.warning(
+                "[!] Your provided modulus is prime:\n%d\nThere is no need to run an integer factorization..."
+                % self.publickey.n
+            )
+            return True
+
+        if self.args.p is not None and self.args.q is None:
+            self.args.q = self.args.n // self.args.p
+
+        if self.args.q is not None and self.args.p is None:
+            self.args.p = self.args.n // self.args.q
+
+        self.need_run = self.args.p is None or self.args.q is None
+
+        if self.args.show_modulus is not None and self.args.show_modulus == True:
+            print("modulus:", self.args.n)
+
+        T = []
         # Loop through implemented attack methods and conduct attacks
         for attack_module in self.implemented_attacks:
-            self.logger.info(
-                "[*] Performing %s attack on %s."
-                % (attack_module.get_name(), self.publickey.filename)
-            )
+            t0 = time.time()
+            if self.need_run:
+                self.logger.info(
+                    f"[*] Performing {attack_module.get_name()} attack on {self.publickey.filename}."
+                )
             try:
                 if not attack_module.can_run():
                     continue
 
-                self.priv_key, unciphered = attack_module.attack_wrapper(
-                    self.publickey, self.cipher
-                )
-                if unciphered is not None and unciphered is not []:
-                    if isinstance(unciphered, list):
-                        self.unciphered = self.unciphered + unciphered
-                    else:
-                        self.unciphered.append(unciphered)
-                if self.can_stop_tests():
-                    self.logger.info(
-                        f"[*] Attack success with {attack_module.get_name()} method !"
+                if self.need_run:
+                    self.priv_key, decrypted = attack_module.attack_wrapper(
+                        self.publickey, self.cipher
                     )
+                else:
+                    self.logger.warning(
+                        "[!] No need to factorize since you provided a prime factor..."
+                    )
+                    decrypted = None
+                    self.priv_key = priv_key = PrivateKey(
+                        self.args.p, self.args.q, self.args.e, self.args.n
+                    )
+
+                if decrypted is not None and decrypted is not []:
+                    if isinstance(decrypted, list):
+                        self.decrypted = self.decrypted + decrypted
+                    else:
+                        self.decrypted.append(decrypted)
+                if self.can_stop_tests():
+                    if self.need_run:
+                        self.logger.info(
+                            f"[*] Attack success with {attack_module.get_name()} method !"
+                        )
                     break
-            except FactorizationError:
+            except TimeoutError:
                 self.logger.warning("Timeout")
+            except FactorizationError:
+                self.logger.warning("FactorizationError")
             except NotImplementedError:
                 self.logger.warning("[!] This attack module is not implemented yet")
             except KeyboardInterrupt:
                 self.logger.warning("[!] Interrupted")
             except Exception as e:
-                self.logger.error(
-                    "[!] An exception has occurred during the attack. Please check your inputs."
-                )
-                self.logger.error("[!] %s" % e)
-                self.logger.error("[!] %s" % traceback.format_exc())
-
+                if self.args.withtraceback:
+                    self.logger.error(
+                        "[!] An exception has occurred during the attack. Please check your inputs."
+                    )
+                    self.logger.error(f"[!] {e}")
+                    self.logger.error(f"[!] {traceback.format_exc()}")
+            t1 = time.time()
+            td = t1 - t0
+            T += [td]
+            self.logger.info("[+] Time elapsed: %.4f sec." % round(td, 4))
+        if len(T) > 0:
+            tmin, tmax, tavg = min(T), max(T), sum(T) / len(T)
+            self.logger.info(
+                "[+] Total time elapsed min,max,avg: %.4f/%.4f/%.4f sec."
+                % (round(tmin, 4), round(tmax, 4), round(tavg, 4))
+            )
         self.print_results_details(publickey)
         self.priv_key_send2fdb()
         return self.get_boolean_results()
